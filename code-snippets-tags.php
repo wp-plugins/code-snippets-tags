@@ -1,15 +1,21 @@
 <?php
 
-/**
+/*
  * Plugin Name: Code Snippets Tags
  * Plugin URL: https://github.com/bungeshea/code-snippets-tags
  * Description: Adds support for adding tags to snippets to the Code Snippets WordPress plugin. Requires Code Snippets 1.7 or later
  * Author: Shea Bunge
  * Author URI: http://bungeshea.com
- * Version: 1.0
+ * Version: 1.1
  * License: MIT
  * License URI: http://opensource.org/license/mit-license.php
  * Text Domain: code-snippets-tags
+ * Domain Path: /languages/
+ */
+
+/**
+ * @package Code Snippets
+ * @subpackage Extend
  */
 
 class Code_Snippets_Tags {
@@ -21,35 +27,44 @@ class Code_Snippets_Tags {
 	 * This should be set to the 'Plugin Version' value,
 	 * as defined above in the plugin header
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
+	 * @var string A PHP-standardized version number string
 	 */
-	public $version = 1.0;
+	public $version = '1.1';
+
+	/**
+	 * Create an instance of the class as part
+	 * of the $code_snippets global variable
+	 *
+	 * @since 1.1
+	 * @access private
+	 */
+	static function init() {
+		global $code_snippets;
+		$class = __CLASS__;
+		$code_snippets->tags = new $class;
+	}
 
 	/**
 	 * The constructor function for our class
 	 *
-	 * We don't do anything here except hook our init
-	 * method to the appropriate hook. This will ensure that
-	 * we only initialize after Code Snippets has loaded
-	 *
-	 * @since Code Snippets Tags 1.0
-	 * @access private
-	 */
-	function __construct() {
-		add_action( 'code_snippets_init', array( $this, 'init' ) );
-	}
-
-	/**
-	 * The initializer function for our class
-	 *
 	 * Here we hook our methods to their actions
 	 * and filters, and run the upgrade method
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
 	 */
-	public function init() {
+	function __construct() {
+
+		/* Run the upgrade method */
+		$this->upgrade();
+
+		/* Load translations */
+		load_plugin_textdomain( 'code-snippets-tags', false, dirname( plugin_basename( __FILE__ ) ) . '/languages/' );
+
+		/* Ensure the 'tags' column is created with a snippet database table */
+		add_filter( 'code_snippets_database_table_columns', array( $this, 'database_table_column' ) );
 
 		/* Administration */
 		add_action( 'code_snippets_admin_single', array( $this, 'admin_single' ) );
@@ -67,7 +82,6 @@ class Code_Snippets_Tags {
 		/* Serializing snippet data */
 		add_filter( 'code_snippets_escape_snippet_data', array( $this, 'escape_snippet_data' ) );
 		add_filter( 'code_snippets_unescape_snippet_data', array( $this, 'unescape_snippet_data' ) );
-		add_filter( 'code_snippets_export_tags', array( $this, 'escape_export_data' ) );
 
 		/* Creating a snippet object */
 		add_filter( 'code_snippets_build_default_snippet', array( $this, 'build_default_snippet' ) );
@@ -75,51 +89,99 @@ class Code_Snippets_Tags {
 
 		/* Scripts and styles */
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
-
-		$this->upgrade();
 	}
 
 	/**
 	 * Check if the currently installed plugin version is new or not
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
 	 */
 	public function upgrade() {
+		global $wpdb, $code_snippets;
 
-		$installed_version = get_site_option( 'code_snippets_tags_version' );
+		/* Fetch the recorded plugin version from the database */
+		$previous_version = get_option( 'code_snippets_tags_version' );
 
-		if ( $this->version !== $installed_version ) {
-			// first run of this version, record it in the database
-			update_site_option( 'code_snippets_tags_version', $this->version );
-			// add the database column
-			$this->add_database_column();
+		if ( ! $previous_version ) {
+
+			// make sure that the version is not stored elsewhere
+			if ( is_multisite() && get_site_option( 'code_snippets_tags_version' ) ) {
+				$previous_version = get_site_option( 'code_snippets_tags_version' );
+				add_option( 'code_snippets_tags_version', $previous_version );
+				delete_site_option( 'code_snippets_tags_version' );
+
+			} else {
+
+				// first run of this version, record it in the database
+				add_option( 'code_snippets_tags_version', $this->version );
+				$previous_version = $this->version;
+
+				// don't allow the plugin to run any further if we're less then Code Snippets 1.7.1
+				if ( ! method_exists( $code_snippets, 'maybe_create_tables' ) ) {
+					return;
+				}
+
+				// force upgrade of snippet tables
+				$code_snippets->maybe_create_tables( true );
+			}
 		}
+
+		elseif ( version_compare( $previous_version, $this->version, '<' ) ) {
+
+			// Update the plugin version recorded in the database
+			update_option( 'code_snippets_tags_version', $this->version );
+
+			// Perform version-specific upgrades
+
+			if ( 0 === version_compare( '1.0', $previous_version ) ) {
+
+				// Upgrade the database data
+				$tables = array();
+
+				if ( $wpdb->get_var( "SHOW TABLES LIKE '$wpdb->snippets'" ) === $wpdb->snippets ) {
+					$tables[] = $wpdb->snippets;
+				}
+
+				if ( is_multisite() && is_main_site() && $wpdb->get_var( "SHOW TABLES LIKE '$wpdb->ms_snippets'" ) === $wpdb->ms_snippets ) {
+					$tables[] = $wpdb->ms_snippets;
+				}
+
+				foreach ( $tables as $table ) {
+					$snippets = $wpdb->get_results( "SELECT id, tags FROM $table" );
+
+					foreach ( $snippets as $snippet ) {
+						$snippet->tags = maybe_unserialize( $snippet->tags );
+						$snippet->tags = $this->build_array( $snippet->tags );
+						$snippet->tags = implode( ', ', $snippet->tags );
+
+						$wpdb->update( $table,
+							array( 'tags' => $snippet->tags ),
+							array( 'id' => $snippet->id ),
+							array( '%s' ),
+							array( '%d' )
+						);
+					}
+				} // end $table foreach
+			} // end version-specific upgrades
+		} // end old version check
 	}
 
 	/**
-	 * Add a column to the database
+	 * Add a column to the snippets database table
 	 *
-	 * @since Code Snippets Tags 1.0
-	 * @access public
+	 * @since 1.1
+	 * @access private
 	 */
-	public function add_database_column() {
-		global $wpdb, $code_snippets;
-
-		$code_snippets->create_tables();
-
-		$sql = 'ALTER TABLE %s ADD COLUMN tags longtext AFTER code';
-
-		$wpdb->query( sprintf( $sql, $wpdb->snippets ) );
-
-		if ( is_multisite() )
-			$wpdb->query( sprintf( $sql, $wpdb->ms_snippets ) );
+	function database_table_column( $table_columns ) {
+		$table_columns[] = 'tags longtext';
+		return $table_columns;
 	}
 
 	/**
 	 * Add a tags column to the snippets table
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access private
 	 */
 	function add_table_column( $columns ) {
@@ -131,7 +193,7 @@ class Code_Snippets_Tags {
 	 * Output the content of the table column
 	 * This function is used once for each row
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access private
 	 */
 	function table_column( $snippet ) {
@@ -154,7 +216,7 @@ class Code_Snippets_Tags {
 	 * Adds the 'tag' query var as a required form field
 	 * so it is preserved over form submissions
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
 	 */
 	function add_form_field( $vars, $context ) {
@@ -170,7 +232,7 @@ class Code_Snippets_Tags {
 	 * Filter the snippets based
 	 * on the tag filter
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
 	 */
 	function filter_snippets( $snippets ) {
@@ -186,6 +248,7 @@ class Code_Snippets_Tags {
 		if ( ! empty( $_GET['tag'] ) ) {
 			$snippets = array_filter( $snippets, array( $this, '_filter_snippets_callback' ) );
 		}
+
 		return $snippets;
 	}
 
@@ -203,7 +266,7 @@ class Code_Snippets_Tags {
 	/**
 	 * Adds the tag filter to the search notice
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access private
 	 */
 	function search_notice() {
@@ -215,7 +278,7 @@ class Code_Snippets_Tags {
 	/**
 	 * Display a dropdown of all of the used tags for filtering items
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
 	 */
 	public function tags_dropdown() {
@@ -249,7 +312,7 @@ class Code_Snippets_Tags {
 	/**
 	 * Gets all of the used tags from the database
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
 	 */
 	public function get_all_tags() {
@@ -263,18 +326,18 @@ class Code_Snippets_Tags {
 		// merge all tags into a single array
 		foreach ( $all_tags as $snippet_tags ) {
 			$snippet_tags = maybe_unserialize( $snippet_tags );
-			$snippet_tags = $this->convert_tags( $snippet_tags );
+			$snippet_tags = $this->build_array( $snippet_tags );
 			$tags = array_merge( $snippet_tags, $tags );
 		}
 
-		// remove dupicate tags
+		// remove duplicate tags
 		return array_values( array_unique( $tags, SORT_REGULAR ) );
 	}
 
 	/**
 	 * Gets the tags of the snippets currently being viewed in the table
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
 	 */
 	public function get_current_tags() {
@@ -291,30 +354,33 @@ class Code_Snippets_Tags {
 			$tags = array_merge( $snippet->tags, $tags );
 		}
 
-		// remove dupicate tags
+		// remove duplicate tags
 		return array_values( array_unique( $tags, SORT_REGULAR ) );
 	}
 
 	/**
 	 * Make sure that the tags are a valid array
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
+	 *
+	 * @param mixed $tags The tags to convert into an array
+	 * @return array The converted tags
 	 */
-	public function convert_tags( $tags ) {
+	public function build_array( $tags ) {
 
-		/* if there are no tags set, create a default empty array */
+		// if there are no tags set, create a default empty array
 		if ( empty( $tags ) ) {
 			$tags = array();
 		}
 
-		/* if the tags are set as a string, convert them to an array */
+		// if the tags are set as a string, convert them to an array
 		elseif ( is_string( $tags ) ) {
 			$tags = str_replace( ', ', ',', $tags );
 			$tags = explode( ',', $tags );
 		}
 
-		/* if we still don't have an array, just convert whatever we do have into one */
+		// if we still don't have an array, just convert whatever we do have into one
 		if ( ! is_array( $tags ) ) {
 			$tags = (array) $tags;
 		}
@@ -325,12 +391,12 @@ class Code_Snippets_Tags {
 	/**
 	 * Escape the tag data for insertion into the database
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access private
 	 */
 	function escape_snippet_data( $snippet ) {
-		$snippet->tags = $this->convert_tags( $snippet->tags );
-		$snippet->tags = maybe_serialize( $snippet->tags );
+		$snippet->tags = $this->build_array( $snippet->tags );
+		$snippet->tags = implode( ', ', $snippet->tags );
 		return $snippet;
 	}
 
@@ -338,35 +404,20 @@ class Code_Snippets_Tags {
 	 * Unescape the tag data after retrieval from the database,
 	 * ready for use
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access private
 	 */
 	function unescape_snippet_data( $snippet ) {
 		$snippet->tags = maybe_unserialize( $snippet->tags );
-		$snippet->tags = $this->convert_tags( $snippet->tags );
+		$snippet->tags = $this->build_array( $snippet->tags );
 		return $snippet;
-	}
-
-	/**
-	 * Format tags as comma-seperated list
-	 * for export file. $this->escape_export_data()
-	 * will later handle converting this
-	 * back into an array
-	 *
-	 * @since Code Snippets Tags 1.0
-	 * @access private
-	 */
-	function escape_export_data( $tags ) {
-		$tags = maybe_unserialize( $tags );
-		$tags = $this->convert_tags( $tags );
-		return implode( ', ', $tags );
 	}
 
 	/**
 	 * Create an empty array for the tags
 	 * when building an empty snippet object
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access private
 	 */
 	function build_default_snippet( $snippet ) {
@@ -378,7 +429,7 @@ class Code_Snippets_Tags {
 	 * Convert snippet array keys into a
 	 * valid snippet object
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access private
 	 */
 	function build_snippet_object( $snippet, $data ) {
@@ -396,13 +447,13 @@ class Code_Snippets_Tags {
 	 * Enqueue the tag-it scripts and styles
 	 * on the edit/add new snippet page
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access private
 	 */
-	function enqueue_scripts() {
+	function enqueue_scripts( $hook ) {
 		global $code_snippets;
 
-		if ( get_current_screen()->id !== $code_snippets->admin_single )
+		if ( $hook !== $code_snippets->admin_single )
 			return;
 
 		$tagit_version = '2.0';
@@ -443,14 +494,14 @@ class Code_Snippets_Tags {
 	/**
 	 * Output the interface for editing snippet tags
 	 *
-	 * @since Code Snippets Tags 1.0
+	 * @since 1.0
 	 * @access public
 	 */
 	public function admin_single( $snippet ) {
 	?>
 		<label for="snippet_tags" style="cursor: auto;">
-			<h3><?php esc_html_e('Tags', 'code-snippets'); ?>
-			<span style="font-weight: normal;"><?php esc_html_e('(Optional)', 'code-snippets'); ?></span></h3>
+			<h3><?php esc_html_e( 'Tags', 'code-snippets-tags' ); ?>
+			<span style="font-weight: normal;"><?php esc_html_e( '(Optional)', 'code-snippets-tags' ); ?></span></h3>
 		</label>
 
 		<input type="text" id="snippet_tags" name="snippet_tags" style="width: 100%;" placeholder="Enter a list of tags; separated by commas" value="<?php echo implode( ', ', $snippet->tags ); ?>" />
@@ -467,12 +518,4 @@ class Code_Snippets_Tags {
 	}
 }
 
-/**
- * Create an instance of the class
- * as part of the $code_snippets global
- * variable
- *
- * @since Code Snippets Tags 1.0
- */
-global $code_snippets;
-$code_snippets->tags = new Code_Snippets_Tags;
+add_action( 'code_snippets_init', array( 'Code_Snippets_Tags', 'init' ) );
