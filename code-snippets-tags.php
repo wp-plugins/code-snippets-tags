@@ -6,7 +6,7 @@
  * Description: Adds support for adding tags to snippets to the Code Snippets WordPress plugin. Requires Code Snippets 1.8 or later
  * Author: Shea Bunge
  * Author URI: http://bungeshea.com
- * Version: 1.2
+ * Version: 1.2.1
  * License: MIT
  * License URI: http://opensource.org/license/MIT
  * Text Domain: code-snippets-tags
@@ -18,7 +18,7 @@
  *
  * @package    Code_Snippets
  * @subpackage Tags
- * @version    1.2
+ * @version    1.2.1
  * @author     Shea Bunge <http://bungeshea.com/>
  * @copyright  Copyright (c) 2013, Shea Bunge
  * @license    http://opensource.org/licenses/MIT
@@ -37,7 +37,7 @@ class Code_Snippets_Tags {
 	 * @access public
 	 * @var    string A PHP-standardized version number string
 	 */
-	public $version = '1.2';
+	public $version = '1.2.1';
 
 	/**
 	 * Create an instance of the class as part
@@ -90,7 +90,7 @@ class Code_Snippets_Tags {
 
 		/* Creating a snippet object */
 		add_filter( 'code_snippets/build_default_snippet', array( $this, 'build_default_snippet' ) );
-		add_filter( 'code_snippets_build_snippet_object', array( $this, 'build_snippet_object' ), 10, 2 );
+		add_filter( 'code_snippets/build_snippet_object', array( $this, 'build_snippet_object' ), 10, 2 );
 
 		/* Scripts and styles */
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
