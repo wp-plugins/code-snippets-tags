@@ -12,9 +12,9 @@ Organize your code snippets with tags. Adds support to the Code Snippets WordPre
 
 == Description ==
 
-Adds support to the Code Snippets WordPress plugin for adding tags to snippets. Requires [Code Snippets](http://wordpress.org/plugins/code-snippets) 1.8 or later.
+> In Code Snippets version 2.0 or later, tags functionality is built in and this plugin is redundant
 
-**Note:** In Code Snippets version 2.0 or later, tags functionality is built in and this plugin is redundant
+Adds support to the Code Snippets WordPress plugin for adding tags to snippets. Requires [Code Snippets](http://wordpress.org/plugins/code-snippets) 1.8 or later.
 
 You can assign tags to snippets using an interactive UI when editing or adding a new snippet. Then, you can filter snippets by tag on the snippets table, or see what tags are assigned to a particular snippet with a glance at the new table column. Tags are stored in your database and can be exported and imported along with the other snippet data.
 
